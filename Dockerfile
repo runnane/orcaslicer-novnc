@@ -8,8 +8,11 @@
 
 FROM ghcr.io/linuxserver/baseimage-selkies:debiantrixie
 
-ARG BUILD_DATE
-ARG VERSION
+# BUILD_DATE and VERSION are deliberately NOT declared here — they are declared
+# after the expensive RUN, next to the stamping layer. A declared ARG joins the
+# environment of every following RUN and busts its cache even when that RUN never
+# mentions it, so declaring them up here made every build a cold one.
+
 # Pin a release ("v2.4.2") or leave empty to track the latest one.
 ARG ORCASLICER_VERSION
 # Bypass the GitHub API entirely by giving a direct AppImage URL. Useful for
@@ -18,11 +21,12 @@ ARG ORCASLICER_VERSION
 ARG ORCASLICER_APPIMAGE_URL
 ARG TARGETARCH
 
+# Only STATIC labels may appear before the expensive RUN — see the stamping
+# layer at the bottom of this file.
 LABEL org.opencontainers.image.title="OrcaSlicer"
 LABEL org.opencontainers.image.description="Web accessible OrcaSlicer"
 LABEL org.opencontainers.image.licenses="GPL-3.0-only"
 LABEL org.opencontainers.image.source="https://github.com/runnane/orcaslicer-novnc"
-LABEL build_version="version:- ${VERSION} Build-date:- ${BUILD_DATE}"
 
 ENV TITLE=OrcaSlicer \
     SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
@@ -110,8 +114,7 @@ RUN \
   test -x /opt/orcaslicer/AppRun && \
   localedef -i en_GB -f UTF-8 en_GB.UTF-8 && \
   chmod +x /opt/orcaslicer/libexec/orca-slicer-env && \
-  printf "OrcaSlicer version: %s\nImage version: %s\nBuild-date: %s\n" \
-    "${RESOLVED_VERSION}" "${VERSION}" "${BUILD_DATE}" > /build_version && \
+  printf "OrcaSlicer version: %s\n" "${RESOLVED_VERSION}" > /build_version && \
   echo "**** cleanup ****" && \
   apt-get autoclean && \
   rm -rf \
@@ -127,6 +130,31 @@ WORKDIR /
 
 # add local files
 COPY /root /
+
+# The stamping layer, and everything about it is LAST on purpose.
+#
+# VERSION and BUILD_DATE change on every build, so they invalidate the cache of
+# every layer that follows their DECLARATION — not merely the ones that mention
+# them. BuildKit puts a declared ARG into the environment of each subsequent RUN,
+# so an `ARG BUILD_DATE` at the top of the file busts the expensive RUN below it
+# even though that RUN never reads it.
+#
+# That is not a guess. Measured on a two-line Dockerfile:
+#   - identical args                          → expensive RUN CACHED
+#   - BUILD_DATE changed, RUN references it   → re-executes
+#   - BUILD_DATE changed, RUN does NOT ref it,
+#     but it is DECLARED above               → still re-executes
+#   - declarations moved below the RUN        → CACHED, only the stamp re-runs
+#
+# Getting this wrong is invisible: it reads as "docker is slow", not as a bug,
+# and it made every build here a cold ~15-minute one. Upstream linuxserver keeps
+# the stamp inside the big RUN, so anything copied from them inherits it.
+#
+# Keep BOTH the declaration and the use below this line.
+ARG VERSION
+ARG BUILD_DATE
+LABEL build_version="version:- ${VERSION} Build-date:- ${BUILD_DATE}"
+RUN printf "Image version: %s\nBuild-date: %s\n" "${VERSION}" "${BUILD_DATE}" >> /build_version
 
 # ports and volumes
 EXPOSE 3000 3001

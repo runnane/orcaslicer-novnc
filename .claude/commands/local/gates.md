@@ -33,7 +33,33 @@ the gate set is a linter, a build and a boot.
   only `compose.yml` or the README re-runs none of it and goes green in
   seconds. Before believing a green build says anything about *upstream*, force
   it: `docker build --no-cache --pull`. Budget ~15 minutes; the cold build here
-  took 885 s, of which 105 s was the 131 MB AppImage download.
+  took 872 s, of which 105 s was the 131 MB AppImage download.
+- **Never `ARG VERSION` or `ARG BUILD_DATE` above the expensive `RUN` — the
+  DECLARATION is what costs you, not the use.** BuildKit puts a declared `ARG`
+  into the environment of every subsequent `RUN`, so an `ARG BUILD_DATE` at the
+  top of the file invalidates the big layer below it **even though that layer
+  never mentions it**. Both the declaration and the use live at the bottom of
+  the Dockerfile, next to a comment explaining why.
+
+  This is not hypothetical, and it is worth knowing how it hid: the stamp
+  started *inside* the big `RUN` (where upstream keeps it), so **every gates run
+  was a cold 15-minute build** and the cache never hit at all. It reads as
+  ordinary Docker slowness, not as a bug. Moving only the *reference* to the
+  bottom did not fix it — the second build still took 15 minutes — because the
+  declarations were still at the top.
+
+  Measured on a two-line Dockerfile, which is how to check this in seconds
+  rather than half an hour:
+
+  | change | expensive `RUN` |
+  | --- | --- |
+  | identical args | `CACHED` |
+  | `BUILD_DATE` changed, `RUN` references it | re-executes |
+  | `BUILD_DATE` changed, `RUN` does **not** reference it, declared above | re-executes |
+  | declarations moved below the `RUN` | `CACHED` |
+
+  If a gates run that should have been cached takes ~15 minutes, suspect this
+  first.
 - **The smoke test's 200 does not mean OrcaSlicer started.** selkies serves its
   own web UI whether or not the autostart worked, so the HTTP check passes on a
   container with no slicer in it. That is why the script also greps the process

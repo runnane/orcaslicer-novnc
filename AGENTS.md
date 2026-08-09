@@ -62,6 +62,14 @@ believing a green build says anything about upstream.
   repo exists to not have — see the README table.
 - **A new build arg needs a README row.** The parameter table is the only
   documentation this repo has; an undocumented arg is an invisible one.
+- **Layer order is load-bearing: neither the declaration nor the use of
+  `VERSION` / `BUILD_DATE` may appear above the stamping layer at the bottom of
+  the Dockerfile.** A declared `ARG` joins the environment of every following
+  `RUN`, so `ARG BUILD_DATE` at the top invalidates the expensive layer *even
+  though that layer never reads it* — making every build a cold 15-minute one,
+  silently, because it reads as ordinary slowness. That is not hypothetical; it
+  is how this repo's first four builds behaved, and moving only the reference
+  did not fix it.
 - **Do not add application code.** If something needs real logic — a version
   checker, a profile sync — it belongs in a sibling repo (`orca-profiles` is
   the OrcaSlicer-config one) rather than growing a `src/` here.
