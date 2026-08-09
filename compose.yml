@@ -1,0 +1,42 @@
+---
+services:
+  orcaslicer:
+    build:
+      context: .
+      args:
+        # Leave unset to track the latest OrcaSlicer release, or pin one:
+        # ORCASLICER_VERSION: v2.4.2
+        ORCASLICER_VERSION: "${ORCASLICER_VERSION:-}"
+    image: orcaslicer-novnc:latest
+    container_name: orcaslicer
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Oslo
+      # Uncomment both to require basic auth (see the security note in README):
+      # - CUSTOM_USER=abc
+      # - PASSWORD=changeme
+    volumes:
+      - ./config:/config
+    ports:
+      - 3000:3000
+      - 3001:3001
+    shm_size: "2gb"
+    restart: unless-stopped
+
+    # --- Hardware acceleration -------------------------------------------
+    # Intel / AMD (open source drivers): uncomment devices + DRINODE.
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # environment:
+    #   - DRINODE=/dev/dri/renderD128
+    #
+    # Nvidia (proprietary, driver >= 580, kernel param nvidia-drm.modeset=1,
+    # and `sudo nvidia-ctk runtime configure --runtime=docker`):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [compute, video, graphics, utility]

@@ -1,0 +1,6 @@
+config/
+.git/
+.github/
+*.md
+!README.md
+compose.yml

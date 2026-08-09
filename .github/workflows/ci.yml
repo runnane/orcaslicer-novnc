@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    # This repo is public, so hosted runners are free. Do not move it to the
+    # self-hosted fleet the private repos in the set have to use.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning
+
+      - name: shellcheck
+        run: shellcheck --shell=bash scripts/gates.sh root/etc/s6-overlay/s6-rc.d/svc-dbus/run
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux/amd64, linux/arm64]
+    steps:
+      - uses: actions/checkout@v5
+
+      # arm64 is emulated here. It is the one thing CI checks that the local
+      # gates deliberately skip, so an arm64-only regression surfaces here first.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.platform }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: false
+          build-args: |
+            BUILD_DATE=${{ github.event.pull_request.updated_at }}
+            VERSION=pr-${{ github.event.number }}
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
