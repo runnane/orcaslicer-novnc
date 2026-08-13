@@ -1,7 +1,7 @@
 ---
 services:
   orcaslicer:
-    # Published on every push to main, for amd64 and arm64. `:latest`, or an
+    # Published on every push to main, amd64 only. `:latest`, or an
     # OrcaSlicer version such as `:2.4.2` to stay on one release.
     image: ghcr.io/runnane/orcaslicer-novnc:latest
     #

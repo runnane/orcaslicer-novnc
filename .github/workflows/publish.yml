@@ -59,16 +59,21 @@ jobs:
         id: stamp
         run: echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
-  # One native runner per architecture. The obvious alternative — a single job
-  # with `platforms: linux/amd64,linux/arm64` — needs QEMU for arm64, which
-  # turns a ~15-minute build into an hours-long one on every push to `main`.
-  # The other obvious alternative, ci.yml's matrix with `push: true` bolted on,
-  # is worse than slow: two jobs pushing the same tag do not compose into an
-  # index, the second simply overwrites the first, and `:latest` stays
-  # single-arch. That is the state the manual push left the package in.
+  # Published images are amd64 only (OSNV-4). The matrix has one entry, and that
+  # is deliberately still a matrix: re-adding arm64 is then one line here plus
+  # one in the verification step, rather than a workflow rewrite.
   #
-  # So each leg pushes an untagged, digest-only manifest and the merge job below
-  # is the only thing that ever writes a tag.
+  # Each leg pushes an untagged, digest-only manifest and the merge job below is
+  # the only thing that ever writes a tag. That shape is kept for one
+  # architecture too, so the published tag stays an *index* and nothing that
+  # already pulls it sees its media type change. It is also the only shape that
+  # survives more than one leg: two jobs pushing the same tag do not compose
+  # into an index, the second simply overwrites the first — which is exactly how
+  # this package spent its first days as a single-arch image.
+  #
+  # A native runner per architecture is not a speed preference either. An
+  # emulated arm64 build of this image cannot succeed at all; see the comment in
+  # ci.yml if arm64 is ever restored.
   build:
     needs: resolve
     strategy:
@@ -77,8 +82,6 @@ jobs:
         include:
           - platform: linux/amd64
             runner: ubuntu-latest
-          - platform: linux/arm64
-            runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5
@@ -158,18 +161,22 @@ jobs:
             --tag "${IMAGE}:${TAG}" \
             $(printf "${IMAGE}@sha256:%s " *)
 
-      - name: Prove both architectures are in the tag
+      - name: Prove the tag carries exactly the intended platforms
         env:
           TAG: ${{ needs.resolve.outputs.tag }}
+          # Comma-separated and sorted. Keep in step with the build matrix.
+          WANT: linux/amd64
         run: |
           docker buildx imagetools inspect "${IMAGE}:latest"
-          # A single-arch push also produces a green job, and the README now
-          # tells arm64 users to pull this. Fail rather than publish a tag that
-          # silently lost an architecture.
-          for want in linux/amd64 linux/arm64; do
-            docker buildx imagetools inspect --raw "${IMAGE}:latest" \
-              | jq -e --arg w "$want" \
-                'any(.manifests[]?; "\(.platform.os)/\(.platform.architecture)" == $w)' >/dev/null \
-              || { echo "::error::${IMAGE}:latest is not a manifest list containing ${want}"; exit 1; }
-          done
-          echo "${IMAGE}:latest and :${TAG} carry both architectures"
+          # Asserting the EXACT set, not merely that amd64 is present. A missing
+          # architecture and an unintended extra one are both silent otherwise:
+          # a leg that drops out still leaves a green job, and arm64 creeping
+          # back in after OSNV-4 removed it would go unnoticed. An empty result
+          # also fails here, which is what a plain (non-index) manifest gives.
+          got=$(docker buildx imagetools inspect --raw "${IMAGE}:latest" \
+            | jq -r '[.manifests[]? | "\(.platform.os)/\(.platform.architecture)"] | sort | join(",")')
+          if [ "$got" != "$WANT" ]; then
+            echo "::error::${IMAGE}:latest carries [${got}], expected [${WANT}]"
+            exit 1
+          fi
+          echo "${IMAGE}:latest and :${TAG} carry exactly ${WANT}"

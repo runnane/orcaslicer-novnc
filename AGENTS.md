@@ -102,7 +102,7 @@ What differs here, and will need translating in both directions:
 | `pnpm gates` (tsc / lint / vitest / build) | `scripts/gates.sh` (hadolint / shellcheck / `docker build` / boot) |
 | gates run in seconds | a cold build is **~15 minutes** |
 | unit tests | none — there is no source to test |
-| CI mirrors local exactly | CI additionally builds **arm64**, which local gates skip |
+| CI mirrors local exactly | CI builds the same **amd64** image the gates do; arm64 is neither built nor published (OSNV-4) |
 
 ## Where things are
 

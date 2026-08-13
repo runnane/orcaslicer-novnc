@@ -27,17 +27,22 @@ jobs:
       - name: shellcheck
         run: shellcheck --shell=bash scripts/gates.sh root/etc/s6-overlay/s6-rc.d/svc-dbus/run
 
-  # arm64 is the one thing CI checks that the local gates deliberately skip, so
-  # an arm64-only regression surfaces here first.
+  # amd64 only: OSNV-4 dropped arm releases, so CI builds what is published.
   #
-  # It runs on a NATIVE arm64 runner, and that is not a speed preference — an
-  # emulated arm64 build of this image cannot succeed at all. OrcaSlicer's
-  # aarch64 AppImage is a **static-pie** ELF, and qemu-user/binfmt cannot exec
-  # one: `./orca.app --appimage-extract` dies with "Exec format error" (exit
-  # 126) before anything is extracted. Reproduced in a plain `debian:trixie`
-  # arm64 container, so it is nothing to do with the selkies base; and the same
-  # AppImage extracts fine on a native arm64 runner. Putting `setup-qemu-action`
-  # back would make this job red forever, not slow.
+  # The Dockerfile still selects an aarch64 AppImage when TARGETARCH says so, so
+  # this repo remains buildable on arm hardware — it is simply not built here
+  # and not published. Nothing in CI covers that path; the README says so
+  # rather than implying a guarantee this matrix does not give.
+  #
+  # If arm64 is ever restored, add `{platform: linux/arm64, runner:
+  # ubuntu-24.04-arm}` — and use a NATIVE runner, not `setup-qemu-action`.
+  # That is not a speed preference: an emulated arm64 build of this image cannot
+  # succeed at all. OrcaSlicer's aarch64 AppImage is a **static-pie** ELF and
+  # qemu-user/binfmt cannot exec one, so `./orca.app --appimage-extract` dies
+  # with "Exec format error" (exit 126) before anything is extracted.
+  # Reproduced in a plain `debian:trixie` arm64 container, so it is nothing to
+  # do with the selkies base, and the same AppImage extracts fine natively.
+  # QEMU would make that job red forever, not slow.
   build:
     strategy:
       fail-fast: false
@@ -45,8 +50,6 @@ jobs:
         include:
           - platform: linux/amd64
             runner: ubuntu-latest
-          - platform: linux/arm64
-            runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v5

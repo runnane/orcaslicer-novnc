@@ -44,8 +44,9 @@ Work issue **$ARGUMENTS** to completion.
    [`shared/gate-failures.md`](shared/gate-failures.md).
 8. **PR** — `gh pr create --base main`, issue key in the branch or title (not
    only the body, or nothing transitions). See
-   [`shared/pr-hygiene.md`](shared/pr-hygiene.md). CI builds **arm64** as well,
-   which your local gates did not; do not call it done before CI is green.
+   [`shared/pr-hygiene.md`](shared/pr-hygiene.md). CI builds the same single
+   amd64 image your local gates did, so a green local run is a good predictor —
+   but do not call it done before CI is green regardless.
 9. **Comment what changed** — files, build args, behaviour — and let the webhook
    move the status.
 
