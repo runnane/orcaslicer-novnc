@@ -1,13 +1,20 @@
 ---
 services:
   orcaslicer:
-    build:
-      context: .
-      args:
-        # Leave unset to track the latest OrcaSlicer release, or pin one:
-        # ORCASLICER_VERSION: v2.4.2
-        ORCASLICER_VERSION: "${ORCASLICER_VERSION:-}"
-    image: orcaslicer-novnc:latest
+    # Published on every push to main, for amd64 and arm64. `:latest`, or an
+    # OrcaSlicer version such as `:2.4.2` to stay on one release.
+    image: ghcr.io/runnane/orcaslicer-novnc:latest
+    #
+    # To build instead of pull — pinning an OrcaSlicer release, or changing the
+    # image — uncomment `build:` and point `image:` at a local tag such as
+    # `orcaslicer-novnc:latest`, so a local build cannot be confused with the
+    # published one. A cold build is ~15 minutes.
+    # build:
+    #   context: .
+    #   args:
+    #     # Leave unset to track the latest OrcaSlicer release, or pin one:
+    #     # ORCASLICER_VERSION: v2.4.2
+    #     ORCASLICER_VERSION: "${ORCASLICER_VERSION:-}"
     container_name: orcaslicer
     environment:
       - PUID=1000

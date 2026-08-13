@@ -1,0 +1,175 @@
+name: Publish
+
+# Republishes the image on every push to `main`, so `:latest` tracks this repo
+# instead of tracking whoever last ran `docker push` by hand. It does NOT notice
+# a new OrcaSlicer release on its own — `main` can sit still while upstream
+# ships; that gap is OSNV-3.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Serialise rather than cancel: a cancelled run can have pushed one
+# architecture's blobs and not the manifest list, and the last push to `main`
+# should be the one that ends up on `:latest`.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+env:
+  # `github.repository` is already lowercase here; GHCR rejects uppercase.
+  IMAGE: ghcr.io/${{ github.repository }}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # The version is resolved ONCE, here, and passed into both builds as
+  # ORCASLICER_VERSION. Letting each build resolve `releases/latest` for itself
+  # would mean a release landing mid-run produces two architectures holding
+  # different slicers under one tag, and a version tag that does not describe
+  # its own contents.
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.orca.outputs.version }}
+      tag: ${{ steps.orca.outputs.tag }}
+      build_date: ${{ steps.stamp.outputs.build_date }}
+    steps:
+      - name: Resolve the OrcaSlicer release
+        id: orca
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # `gh api` over curl on purpose: the project moved org from SoftFever,
+          # and the old path 301s to an empty body unless you remember `-L`.
+          # It also authenticates, lifting the unauthenticated 60/hour limit.
+          version=$(gh api repos/OrcaSlicer/OrcaSlicer/releases/latest --jq .tag_name)
+          case "$version" in
+            v[0-9]*) ;;
+            *) echo "::error::release API returned '${version}', which is not a version tag"; exit 1 ;;
+          esac
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${version#v}" >> "$GITHUB_OUTPUT"
+          echo "resolved OrcaSlicer ${version}"
+
+      - name: Stamp
+        id: stamp
+        run: echo "build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+  # One native runner per architecture. The obvious alternative — a single job
+  # with `platforms: linux/amd64,linux/arm64` — needs QEMU for arm64, which
+  # turns a ~15-minute build into an hours-long one on every push to `main`.
+  # The other obvious alternative, ci.yml's matrix with `push: true` bolted on,
+  # is worse than slow: two jobs pushing the same tag do not compose into an
+  # index, the second simply overwrites the first, and `:latest` stays
+  # single-arch. That is the state the manual push left the package in.
+  #
+  # So each leg pushes an untagged, digest-only manifest and the merge job below
+  # is the only thing that ever writes a tag.
+  build:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build ${{ matrix.platform }}
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            ORCASLICER_VERSION=${{ needs.resolve.outputs.version }}
+            VERSION=${{ github.sha }}
+            BUILD_DATE=${{ needs.resolve.outputs.build_date }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=publish-${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=publish-${{ matrix.platform }}
+          # Attestations would add `unknown/unknown` entries to the index that
+          # the architecture check below would then have to special-case, for a
+          # guarantee nothing here consumes. Off, deliberately, not by default.
+          provenance: false
+          sbom: false
+
+      - name: Export the digest
+        run: |
+          mkdir -p /tmp/digests
+          # The `sha256:` prefix is stripped because `:` is not allowed in an
+          # uploaded artifact's paths; the merge job puts it back.
+          digest='${{ steps.build.outputs.digest }}'
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          # `/` is not allowed in an artifact name, and linux/amd64 has one.
+          name: digest-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create the manifest list
+        working-directory: /tmp/digests
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          # Each file is named for a digest the build job pushed; the filenames
+          # are the whole payload. The word splitting SC2046 objects to is the
+          # mechanism — one argument per architecture is the point.
+          # shellcheck disable=SC2046
+          docker buildx imagetools create \
+            --tag "${IMAGE}:latest" \
+            --tag "${IMAGE}:${TAG}" \
+            $(printf "${IMAGE}@sha256:%s " *)
+
+      - name: Prove both architectures are in the tag
+        env:
+          TAG: ${{ needs.resolve.outputs.tag }}
+        run: |
+          docker buildx imagetools inspect "${IMAGE}:latest"
+          # A single-arch push also produces a green job, and the README now
+          # tells arm64 users to pull this. Fail rather than publish a tag that
+          # silently lost an architecture.
+          for want in linux/amd64 linux/arm64; do
+            docker buildx imagetools inspect --raw "${IMAGE}:latest" \
+              | jq -e --arg w "$want" \
+                'any(.manifests[]?; "\(.platform.os)/\(.platform.architecture)" == $w)' >/dev/null \
+              || { echo "::error::${IMAGE}:latest is not a manifest list containing ${want}"; exit 1; }
+          done
+          echo "${IMAGE}:latest and :${TAG} carry both architectures"
