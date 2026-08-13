@@ -103,16 +103,27 @@ for as long as that stays put — pin for anything you care about.
 ### Multi-arch
 
 OrcaSlicer publishes AppImages for `x86_64` and `aarch64`, and the selkies base is
-available for both, so one build command covers both:
+available for both, so one Dockerfile covers both — but **each architecture has to be
+built on its own hardware**:
 
 ```bash
-docker buildx build --platform linux/amd64,linux/arm64 -t orcaslicer-novnc:latest .
+# on an x86_64 host
+docker buildx build --platform linux/amd64 -t orcaslicer-novnc:latest .
+# on an arm64 host
+docker buildx build --platform linux/arm64 -t orcaslicer-novnc:latest .
 ```
 
-Building `linux/arm64` on an x86 host needs binfmt emulation registered first
-(`docker run --privileged --rm tonistiigi/binfmt --install arm64`), and it is slow. The
-published images avoid that by building each architecture on a native runner. Any other
-`TARGETARCH` fails the build with a message rather than producing a broken image.
+**Emulation does not work for this image, and it is not a matter of patience.**
+OrcaSlicer's `aarch64` AppImage is a *static-pie* ELF, and `qemu-user`/`binfmt` cannot
+exec one — `./orca.app --appimage-extract` fails with `Exec format error` (exit 126)
+before anything is extracted. That is reproducible in a plain `debian:trixie` arm64
+container, so it is not caused by the base image, and the same AppImage extracts fine on
+real arm64 hardware. So `--platform linux/amd64,linux/arm64` in one command on an x86
+host will fail, and `tonistiigi/binfmt` will not rescue it. The published images build
+each architecture on a native runner for exactly this reason.
+
+Any other `TARGETARCH` fails the build with a message rather than producing a broken
+image.
 
 ### Avoiding the GitHub API
 
