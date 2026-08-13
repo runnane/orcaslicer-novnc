@@ -22,8 +22,9 @@ Plan **$ARGUMENTS**. Do not implement.
    against an existing image in seconds, but anything touching packages or
    extraction needs a real `--no-cache` build, so say which and budget ~15
    minutes for the latter.
-5. Note whether it is arm64-affecting. Local gates build amd64 only, so an
-   arm64-only change cannot be verified before CI.
+5. Note whether it is arm64-affecting. Since OSNV-4 nothing builds arm64 —
+   not the gates, not CI — so an arm64-only change cannot be verified anywhere
+   short of an arm machine. Say so in the plan rather than implying CI covers it.
 6. Record the plan as a comment on the issue.
 
 Call out explicitly if the work would change the **security posture** (auth,

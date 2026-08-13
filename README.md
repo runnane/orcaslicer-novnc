@@ -29,7 +29,7 @@ supervision with it.
 
 | | linuxserver | here |
 | --- | --- | --- |
-| Architectures | two files — `Dockerfile` + `Dockerfile.aarch64` | **one** Dockerfile; buildx's `TARGETARCH` picks the asset |
+| Architectures | two files — `Dockerfile` + `Dockerfile.aarch64` | **one** Dockerfile; buildx's `TARGETARCH` picks the asset (only amd64 is published here) |
 | `ORCASLICER_VERSION` | declared, but the build always reads `releases/latest` — **pinning has no effect** | pinning hits `releases/tags/<version>` and actually pins |
 | Asset selection | `awk '/browser_download_url.*Ubuntu2404_V/'` over raw JSON | `jq`, filtered on both arch and `.AppImage` |
 | Air-gapped / rate-limited builds | not possible without editing the Dockerfile | `ORCASLICER_APPIMAGE_URL` skips the GitHub API entirely |
@@ -38,8 +38,8 @@ supervision with it.
 
 ## Usage
 
-The image is published to GHCR for `linux/amd64` and `linux/arm64`, and the package is
-public — no `docker login`, no token:
+The image is published to GHCR for **`linux/amd64`**, and the package is public — no
+`docker login`, no token:
 
 ```bash
 docker compose up -d
@@ -64,7 +64,8 @@ on require a secure context.
 | `latest` | Rebuilt and republished on every push to `main` |
 | `2.4.2` | The image carrying that OrcaSlicer release — pin this if you want to stay put |
 
-Both are multi-arch: `docker pull` picks the right one for the host. Check what actually
+Both are **amd64 only**. If you are on arm64 hardware there is no image to pull; build
+it yourself — see below, it works, it is simply not published. Check what actually
 landed:
 
 ```bash
@@ -100,11 +101,14 @@ docker build --build-arg ORCASLICER_VERSION=v2.4.2 -t orcaslicer-novnc:2.4.2 .
 Unset means "whatever `releases/latest` says at build time", which is reproducible only
 for as long as that stays put — pin for anything you care about.
 
-### Multi-arch
+### Building for arm64
 
-OrcaSlicer publishes AppImages for `x86_64` and `aarch64`, and the selkies base is
-available for both, so one Dockerfile covers both — but **each architecture has to be
-built on its own hardware**:
+**Only amd64 is published.** The Dockerfile still supports arm64 and builds cleanly on
+arm hardware — OrcaSlicer publishes AppImages for `x86_64` and `aarch64`, and the selkies
+base is available for both — so if you want an arm64 image, build one. Nothing in CI
+covers that path, so treat it as supported-but-unwatched rather than guaranteed.
+
+**Each architecture has to be built on its own hardware:**
 
 ```bash
 # on an x86_64 host
@@ -119,8 +123,8 @@ exec one — `./orca.app --appimage-extract` fails with `Exec format error` (exi
 before anything is extracted. That is reproducible in a plain `debian:trixie` arm64
 container, so it is not caused by the base image, and the same AppImage extracts fine on
 real arm64 hardware. So `--platform linux/amd64,linux/arm64` in one command on an x86
-host will fail, and `tonistiigi/binfmt` will not rescue it. The published images build
-each architecture on a native runner for exactly this reason.
+host will fail, and `tonistiigi/binfmt` will not rescue it. Build arm64 on an arm64
+machine, or not at all.
 
 Any other `TARGETARCH` fails the build with a message rather than producing a broken
 image.

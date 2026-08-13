@@ -70,12 +70,15 @@ the gate set is a linter, a build and a boot.
 - **Both linters run in containers**, because neither is installed on this host
   and neither is packaged for Arch. First run pulls `hadolint/hadolint` and
   `koalaman/shellcheck` — a few seconds, once.
-- **`docker build` is amd64-only here unless you ask for more.** Multi-arch
-  needs `docker buildx build --platform linux/amd64,linux/arm64`, and building
-  arm64 on this x86 host additionally needs binfmt registered
-  (`docker run --privileged --rm tonistiigi/binfmt --install arm64`). The gates
-  deliberately do not do this — it turns a 15-minute build into a much longer
-  one — so **an arm64 regression is invisible locally** and only CI will see it.
+- **`docker build` here is amd64, and so is everything else.** Since OSNV-4
+  only amd64 is published and only amd64 is built in CI, so the gates and CI
+  now agree and there is no architecture gap between them.
+- **arm64 is buildable but watched by nothing.** The Dockerfile still selects an
+  aarch64 AppImage when `TARGETARCH` says so, and it works on arm hardware — but
+  no gate and no CI job exercises it, so an arm64 regression is invisible
+  everywhere, not merely locally. Do not try to cover it with binfmt: that
+  AppImage is static-pie and `qemu-user` cannot exec it at all, so an emulated
+  build fails with `Exec format error` rather than merely running slowly.
 
 ## CI
 
