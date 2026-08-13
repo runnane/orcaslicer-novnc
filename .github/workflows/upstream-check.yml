@@ -1,0 +1,176 @@
+name: Upstream check
+
+# publish.yml only notices things that happen in THIS repo — it runs on push to
+# `main`. Upstream has its own clock: OrcaSlicer can ship two releases while
+# `main` sits still, and nothing would rebuild. That gap is what this closes.
+# It notifies; it does not publish. Rebuilding on a timer would put an
+# unreviewed upstream release on `:latest` with nobody watching, which is a call
+# for the repo owner and not for a cron job.
+
+on:
+  schedule:
+    # Mondays, 06:17 UTC. OrcaSlicer does not release daily, and an odd minute
+    # keeps it off GitHub's on-the-hour scheduling pile-up.
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      pretend_upstream:
+        description: 'Pretend upstream released this tag (e.g. v9.9.9) — for exercising the new-version path'
+        required: false
+        default: ''
+      dry_run:
+        description: 'Report what would be filed, without filing it'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # This job deliberately does not check the repo out — it needs no files
+      # from it. But `gh issue list`/`gh issue create` infer the repository from
+      # a git remote, so without GH_REPO they die with "not a git repository".
+      # Found by an observed run, not by reading: the paths that call `gh issue`
+      # are only reached once upstream has actually moved, so every green run
+      # until that day would have proved nothing about them.
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: What has OrcaSlicer released
+        id: upstream
+        env:
+          # Through the environment, never interpolated into the script body:
+          # `${{ inputs.x }}` is pasted in as text before bash sees it, so a
+          # crafted input would run as code. Dispatch is maintainer-only, but
+          # this repo is public and the pattern should not be copied out of it.
+          PRETEND: ${{ inputs.pretend_upstream }}
+        run: |
+          set -euo pipefail
+          if [ -n "${PRETEND:-}" ]; then
+            version="$PRETEND"
+            echo "::notice::using pretend upstream ${version}"
+          else
+            # `gh api` rather than curl: the project moved org from SoftFever and
+            # the old path 301s to an empty body without `-L`, and this
+            # authenticates, so the unauthenticated 60/hour limit does not apply.
+            version=$(gh api repos/OrcaSlicer/OrcaSlicer/releases/latest --jq .tag_name)
+          fi
+          # A rate-limit body, an error message or an empty string must not read
+          # as "nothing new". A silent watcher is the same as no watcher.
+          case "$version" in
+            v[0-9]*) ;;
+            *) echo "::error::release API returned '${version}', which is not a version tag"; exit 1 ;;
+          esac
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "upstream: ${version}"
+
+      - name: What is actually published
+        id: published
+        run: |
+          set -euo pipefail
+          repo="${IMAGE_REPO,,}"
+          accept='application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
+
+          # The package is public, so an anonymous pull token is enough and no
+          # credential is needed here at all.
+          token=$(curl -fsS "https://ghcr.io/token?scope=repository:${repo}:pull&service=ghcr.io" | jq -r .token) || {
+            echo "::error::could not reach ghcr.io for an anonymous pull token — if the package went private this is where it shows up"
+            exit 1
+          }
+          [ -n "$token" ] && [ "$token" != "null" ] || { echo "::error::ghcr.io issued no pull token for ${repo}"; exit 1; }
+
+          digest_of() {
+            curl -fsSI -H "Authorization: Bearer ${token}" -H "Accept: ${accept}" \
+              "https://ghcr.io/v2/${repo}/manifests/$1" \
+              | tr -d '\r' | awk 'tolower($1)=="docker-content-digest:"{print $2}'
+          }
+
+          # The OrcaSlicer version is NOT in any image label — `build_version`
+          # holds this repo's commit and `org.opencontainers.image.version` comes
+          # from the selkies base — and it is only in `/build_version` inside the
+          # filesystem, which cannot be read without pulling ~2 GB.
+          #
+          # So use the tag instead: publish.yml writes `:latest` and `:<version>`
+          # in one `imagetools create`, making them the same digest by
+          # construction. Two HEAD requests, no pull, and nothing that depends on
+          # a version string committed to this repo.
+          latest=$(digest_of latest)
+          [ -n "$latest" ] || { echo "::error::${repo}:latest has no manifest digest"; exit 1; }
+
+          published=""
+          for tag in $(curl -fsS -H "Authorization: Bearer ${token}" \
+                         "https://ghcr.io/v2/${repo}/tags/list" | jq -r '.tags[]'); do
+            [ "$tag" = "latest" ] && continue
+            if [ "$(digest_of "$tag")" = "$latest" ]; then
+              published="$tag"
+              break
+            fi
+          done
+
+          # Not finding one is a real problem — it means :latest was published
+          # without its version tag — so say so rather than silently comparing
+          # against an empty string and filing a nonsense issue every week.
+          [ -n "$published" ] || {
+            echo "::error::no version tag shares a digest with ${repo}:latest (${latest}); publish.yml should always write both"
+            exit 1
+          }
+          echo "version=v${published}" >> "$GITHUB_OUTPUT"
+          echo "published: v${published} (${latest})"
+
+      - name: Compare, and file an issue if upstream has moved
+        env:
+          UPSTREAM: ${{ steps.upstream.outputs.version }}
+          PUBLISHED: ${{ steps.published.outputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          if [ "$UPSTREAM" = "$PUBLISHED" ]; then
+            echo "up to date: published ${PUBLISHED} is the latest OrcaSlicer release"
+            exit 0
+          fi
+
+          TITLE="OrcaSlicer ${UPSTREAM} is out; ${PUBLISHED} is published"
+          export TITLE
+
+          # The job has no memory between runs, so the tracker is the state.
+          # Search open AND closed: if a human closes one as "not now", an
+          # open-only search would refile it every Monday forever.
+          #
+          # The search narrows; the exact title match decides. `env.TITLE` rather
+          # than interpolating into the jq program, so a title containing a quote
+          # cannot rewrite the filter.
+          existing=$(gh issue list --state all --search "${UPSTREAM} in:title" \
+                       --json number,title \
+                       --jq '[.[] | select(.title == env.TITLE)] | .[0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "already filed as #${existing}; nothing to do"
+            exit 0
+          fi
+
+          body=$(cat <<EOF
+          OrcaSlicer has released **${UPSTREAM}**. The published image is still **${PUBLISHED}**.
+
+          Nothing is broken — this is the gap \`publish.yml\` cannot see, because it
+          only runs on push to \`main\` and \`main\` has not moved.
+
+          To pick it up, run the **Publish** workflow (Actions → Publish → Run
+          workflow). It resolves \`releases/latest\` itself, so there is nothing in
+          the tree to change first.
+
+          Filed by \`.github/workflows/upstream-check.yml\`.
+          EOF
+          )
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "::notice::DRY RUN — would file: ${TITLE}"
+            printf '%s\n' "$body"
+            exit 0
+          fi
+
+          gh issue create --title "$TITLE" --body "$body"
