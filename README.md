@@ -38,21 +38,60 @@ supervision with it.
 
 ## Usage
 
+The image is published to GHCR for `linux/amd64` and `linux/arm64`, and the package is
+public — no `docker login`, no token:
+
 ```bash
-docker compose up -d --build
+docker compose up -d
+```
+
+or without compose:
+
+```bash
+docker run -d --name orcaslicer \
+  -p 3001:3001 --shm-size=2gb -v "$(pwd)/config:/config" \
+  ghcr.io/runnane/orcaslicer-novnc:latest
 ```
 
 Then open **<https://localhost:3001/>**. Port 3000 is plain HTTP and is only useful
 behind a reverse proxy that terminates TLS — several browser features the slicer relies
 on require a secure context.
 
-### Pinning a release
+### Tags
+
+| Tag | What it is |
+| --- | --- |
+| `latest` | Rebuilt and republished on every push to `main` |
+| `2.4.2` | The image carrying that OrcaSlicer release — pin this if you want to stay put |
+
+Both are multi-arch: `docker pull` picks the right one for the host. Check what actually
+landed:
 
 ```bash
-ORCASLICER_VERSION=v2.4.2 docker compose build
+docker run --rm ghcr.io/runnane/orcaslicer-novnc:latest cat /build_version
 ```
 
-or directly:
+That records the resolved OrcaSlicer version and the commit of this repo that built the
+image.
+
+Nothing yet republishes when OrcaSlicer releases without a corresponding push here, so
+`latest` can lag upstream by a release; pull it again after a new OrcaSlicer version to
+be sure.
+
+## Building it yourself
+
+Building is the slow path — a cold build is roughly 15 minutes against a pull of a few
+minutes — and is worth it to pin an OrcaSlicer release the tags do not cover, or to
+change the image.
+
+```bash
+docker build -t orcaslicer-novnc:latest .
+```
+
+To build via `compose.yml`, uncomment its `build:` block and point `image:` at a local
+tag first.
+
+### Pinning a release
 
 ```bash
 docker build --build-arg ORCASLICER_VERSION=v2.4.2 -t orcaslicer-novnc:2.4.2 .
@@ -60,12 +99,6 @@ docker build --build-arg ORCASLICER_VERSION=v2.4.2 -t orcaslicer-novnc:2.4.2 .
 
 Unset means "whatever `releases/latest` says at build time", which is reproducible only
 for as long as that stays put — pin for anything you care about.
-
-Check what actually landed in an image:
-
-```bash
-docker run --rm orcaslicer-novnc:latest cat /build_version
-```
 
 ### Multi-arch
 
@@ -77,9 +110,9 @@ docker buildx build --platform linux/amd64,linux/arm64 -t orcaslicer-novnc:lates
 ```
 
 Building `linux/arm64` on an x86 host needs binfmt emulation registered first
-(`docker run --privileged --rm tonistiigi/binfmt --install arm64`), and it is slow.
-Any other `TARGETARCH` fails the build with a message rather than producing a broken
-image.
+(`docker run --privileged --rm tonistiigi/binfmt --install arm64`), and it is slow. The
+published images avoid that by building each architecture on a native runner. Any other
+`TARGETARCH` fails the build with a message rather than producing a broken image.
 
 ### Avoiding the GitHub API
 
@@ -92,6 +125,16 @@ docker build \
   --build-arg ORCASLICER_VERSION=v2.4.2 \
   -t orcaslicer-novnc:2.4.2 .
 ```
+
+### Publishing from a fork
+
+`.github/workflows/publish.yml` needs no secrets — the built-in `GITHUB_TOKEN` with
+`packages: write` is the whole credential. One thing will still catch you out: a newly
+created GHCR package is **private**, and its visibility is a **web-UI-only toggle**
+(the package's page → *Package settings* → *Change visibility*). There is no REST API
+for it — `PATCH /user/packages/container/<name>` answers `404 Not Found` even for a
+package the same token can `GET` fine. Until it is flipped, `docker pull` fails with a
+bare `denied` that mentions nothing about visibility.
 
 ## Parameters
 
