@@ -1,18 +1,20 @@
 # CLAUDE.md
 
-Entry point for Claude Code. The project conventions live in **AGENTS.md**,
-imported below so they load every session.
+Entry point for Claude Code, and **load-bearing** — measured 2026-08-14 on
+Claude Code 2.1.232, a project-root `AGENTS.md` with no `CLAUDE.md` is not
+discovered. Shrink this file, never delete it. The project conventions live in
+**AGENTS.md**, imported below so they load every session.
 
 @AGENTS.md
 
 On-demand references — open the relevant one when the work matches:
 
-- `.claude/commands/local/gates.md` — the exact gate command, what each step is
-  actually worth, and the traps that make a green run mean less than it looks.
-- `.claude/commands/shared/pr-hygiene.md` — branch/PR/tracker rules.
-- `.claude/commands/shared/gate-failures.md` — what to do when a gate goes red.
-- `.claude/commands/shared/agent-isolation.md` — one checkout one agent; commit
-  only where you were invoked.
+- [`.agents/gates.md`](.agents/gates.md) — the exact gate command, what each
+  step is actually worth, and the traps that make a green run mean less than it
+  looks. Named by [`.agents/repo.json`](.agents/repo.json) as `gatesDoc`.
+- The `pr-hygiene`, `gate-failures` and `agent-isolation` **skills** come from
+  the userspace bundle (`runnane/agent-userspace`) and load on their own; the
+  copies that used to sit in `.claude/commands/shared/` were deleted by OSNV-6.
 
 Three things worth loading into your head before touching this repo:
 

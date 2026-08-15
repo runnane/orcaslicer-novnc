@@ -41,7 +41,8 @@ paragraph in the README.
 scripts/gates.sh            # hadolint → shellcheck → docker build → smoke
 ```
 
-See [`.claude/commands/local/gates.md`](.claude/commands/local/gates.md) for
+See [`.agents/gates.md`](.agents/gates.md) — named by `.agents/repo.json` as
+`gatesDoc` — for
 what each step is worth, and for the three traps — chiefly that **a cached
 build proves almost nothing**, because every interesting failure lives in the
 one `RUN` layer that Docker caches wholesale. Force `--no-cache --pull` before
@@ -76,33 +77,39 @@ believing a green build says anything about upstream.
 - **Keep the `root/` files close to upstream.** They are byte-copied from
   `linuxserver/docker-orcaslicer` so that a future upstream change is a visible
   diff. Deviate only with a reason recorded in the commit message.
-- **Follow-ups become issues — never inline TODO text.** Any deferred work must
-  be filed via `issues_create_issue` in the `orcaslicer-novnc` project, after a
-  dedupe **search** (`issues_list_issues {project, q, order: "newest"}` with no
-  status filter). Never write "TODO:" or "worth doing later" as prose.
-- **Branch → commit → PR, always from fresh `main`.** One issue → one PR → one
-  merge. The issue key goes in the **branch or title**, never only the body.
-  See [`.claude/commands/shared/pr-hygiene.md`](.claude/commands/shared/pr-hygiene.md).
-- **Comment on the issue when you start and when you finish.**
-- **Never leave an issue partly implemented — split it instead.**
 
-## The agent tooling is mirrored across sibling repos
+The branch/PR/tracker discipline — follow-ups become issues, one issue one PR,
+the key in the branch or title, comment on start and finish, split rather than
+half-ship — is in the userspace bundle and is not repeated here. Issues live in
+the `orcaslicer-novnc` project, key `OSNV`; both are in
+[`.agents/repo.json`](.agents/repo.json).
 
-This repo is part of the agent-tooling sync set. `.claude/commands/shared/*.md`
-are **byte-identical across every repo in the set** (verified with `sha256sum`)
-and must never be edited in one repo alone;
-`.claude/commands/local/gates.md` is this repo's own and is never synced. The
-set is enumerated in `respawn-control`'s `AGENTS.md`, which is the one place it
-is listed.
+## How agent instructions reach this repo
 
-What differs here, and will need translating in both directions:
+Ten repos run the same agent workflow against one tracker and one PR webhook.
+They used to do it by copying `.claude/commands/` between each other, which
+drifted measurably; RCP-878 replaced that with one bundle plus one manifest per
+repo, and OSNV-6 adopted it here. There is nothing left to sync and no
+`sha256sum` check to run.
+
+- **The bundle** — `runnane/agent-userspace`: the constitution, the
+  repo-agnostic workflow commands, and the `pr-hygiene`, `gate-failures` and
+  `agent-isolation` skills.
+- **[`.agents/repo.json`](.agents/repo.json)** — the facts that differ. This
+  repo is the strongest argument for the manifest existing, because more differs
+  here than anywhere else in the set.
+
+**This repo is why "adapt, don't copy" was a rule and why a manifest replaced
+it.** Every difference below was, until now, prose that had to be kept in sync
+by hand — and the copied commands still said `pnpm gates`:
 
 | Elsewhere in the set | Here |
 | --- | --- |
-| `pnpm gates` (tsc / lint / vitest / build) | `scripts/gates.sh` (hadolint / shellcheck / `docker build` / boot) |
-| gates run in seconds | a cold build is **~15 minutes** |
-| unit tests | none — there is no source to test |
+| `pnpm gates` (tsc / lint / vitest / build) | `scripts/gates.sh` (hadolint / shellcheck / `docker build` / boot) — **there is no `pnpm` and no `package.json` at all** |
+| gates run in seconds | a cold build is **~15 minutes**, which changes what "just re-run it" costs |
+| unit tests | none — there is no application source to test |
 | CI mirrors local exactly | CI builds the same **amd64** image the gates do; arm64 is neither built nor published (OSNV-4) |
+| a changeset for user-visible changes | no release process at all; the image is the artifact |
 
 ## Where things are
 
