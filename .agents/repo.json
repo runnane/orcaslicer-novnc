@@ -1,0 +1,16 @@
+{
+  "repo": "runnane/orcaslicer-novnc",
+  "trackerKey": "OSNV",
+  "trackerSlug": "orcaslicer-novnc",
+  "visibility": "public",
+  "gates": {
+    "all": "scripts/gates.sh",
+    "quick": "scripts/gates.sh --no-build --no-smoke"
+  },
+  "release": "none",
+  "ci": "github-hosted",
+  "liveBoundary": "none",
+  "worktreeSafe": true,
+  "gatesDoc": ".agents/gates.md",
+  "userspaceBundle": "github:runnane/agent-userspace"
+}
