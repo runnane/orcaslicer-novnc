@@ -1,2 +1,4 @@
 # runtime state — the /config bind mount
 config/
+.claude/*.local.json
+.claude/worktrees/
